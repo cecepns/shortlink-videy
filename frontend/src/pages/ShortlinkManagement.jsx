@@ -14,10 +14,16 @@ function ShortlinkManagement() {
 
   const [showFormatSettings, setShowFormatSettings] = useState(false);
   const [urlFormat, setUrlFormat] = useState(() => localStorage.getItem("urlFormat") || "standard");
+  const [customExtension, setCustomExtension] = useState(() => localStorage.getItem("customExtension") || ".mp4");
 
   const handleSetUrlFormat = (format) => {
     setUrlFormat(format);
     localStorage.setItem("urlFormat", format);
+  };
+
+  const getCleanedExtension = (ext) => {
+    if (!ext) return "";
+    return ext.startsWith(".") ? ext : "." + ext;
   };
 
   const fetchLinks = async (pageNumber) => {
@@ -66,7 +72,7 @@ function ShortlinkManagement() {
         },
         body: JSON.stringify({
           originalUrl,
-          extension: urlFormat === "mp4" ? ".mp4" : ""
+          extension: urlFormat === "custom" ? getCleanedExtension(customExtension) : ""
         }),
       });
       if (res.status === 401) {
@@ -175,7 +181,7 @@ function ShortlinkManagement() {
               <span>Pemformatan URL</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Pilih apakah akan secara otomatis menambahkan ekstensi .mp4 ke tautan pendek standar yang Anda hasilkan.
+              Pilih apakah akan secara otomatis menambahkan ekstensi khusus (misalnya .mp4) ke tautan pendek standar yang Anda hasilkan.
             </p>
             
             <div className="grid gap-2 sm:grid-cols-2">
@@ -199,16 +205,29 @@ function ShortlinkManagement() {
               </div>
 
               <div
-                onClick={() => handleSetUrlFormat("mp4")}
+                onClick={() => handleSetUrlFormat("custom")}
                 className={`cursor-pointer rounded-xl border p-3.5 transition flex flex-col justify-between ${
-                  urlFormat === "mp4"
+                  urlFormat === "custom"
                     ? "border-sky-500 bg-sky-50/70 text-sky-955"
                     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                 }`}
               >
-                <span className="text-xs font-semibold block">Tambahkan ekstensi .mp4</span>
-                <p className="mt-2 text-[11px] font-mono text-slate-500">
-                  {window.location.host}/s/abcd1234.mp4
+                <span className="text-xs font-semibold block">Ekstensi Kustom</span>
+                
+                <input
+                  type="text"
+                  placeholder=".mp4"
+                  value={customExtension}
+                  onChange={(e) => {
+                    setCustomExtension(e.target.value);
+                    localStorage.setItem("customExtension", e.target.value);
+                  }}
+                  className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-sky-500 text-slate-800"
+                  onClick={(e) => e.stopPropagation()}
+                />
+
+                <p className="mt-2 text-[11px] font-mono text-slate-500 truncate">
+                  {window.location.host}/s/abcd1234{getCleanedExtension(customExtension)}
                 </p>
               </div>
             </div>

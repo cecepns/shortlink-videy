@@ -218,19 +218,20 @@ app.get('/api/links/:code', async (req, res) => {
       [code],
     )
 
-    if (rows.length === 0 && code.endsWith('.mp4')) {
-      const baseCode = code.slice(0, -4)
+    // Fallback 1: If not found and incoming code has a dot, strip the extension and search
+    if (rows.length === 0 && code.includes('.')) {
+      const baseCode = code.substring(0, code.lastIndexOf('.'))
       ;[rows] = await pool.query(
         'SELECT id, code, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
         [baseCode],
       )
     }
 
-    if (rows.length === 0 && !code.endsWith('.mp4')) {
-      const mp4Code = code + '.mp4'
+    // Fallback 2: If not found, look for shortlinks where code starts with the input code followed by a dot
+    if (rows.length === 0) {
       ;[rows] = await pool.query(
-        'SELECT id, code, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
-        [mp4Code],
+        'SELECT id, code, original_url, is_active FROM shortlinks WHERE code LIKE CONCAT(?, \'.%\') LIMIT 1',
+        [code],
       )
     }
 
@@ -261,7 +262,10 @@ app.post('/api/links', authMiddleware, async (req, res) => {
     return res.status(400).json({ message: 'originalUrl wajib diisi' })
   }
 
-  const suffix = extension === '.mp4' ? '.mp4' : ''
+  let suffix = ''
+  if (extension) {
+    suffix = extension.startsWith('.') ? extension : '.' + extension
+  }
 
   try {
     let code = generateCode() + suffix
@@ -341,19 +345,20 @@ app.get('/:code', async (req, res) => {
       [code],
     )
 
-    if (rows.length === 0 && code.endsWith('.mp4')) {
-      const baseCode = code.slice(0, -4)
+    // Fallback 1: If not found and incoming code has a dot, strip the extension and search
+    if (rows.length === 0 && code.includes('.')) {
+      const baseCode = code.substring(0, code.lastIndexOf('.'))
       ;[rows] = await pool.query(
         'SELECT id, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
         [baseCode],
       )
     }
 
-    if (rows.length === 0 && !code.endsWith('.mp4')) {
-      const mp4Code = code + '.mp4'
+    // Fallback 2: If not found, look for shortlinks where code starts with the input code followed by a dot
+    if (rows.length === 0) {
       ;[rows] = await pool.query(
-        'SELECT id, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
-        [mp4Code],
+        'SELECT id, original_url, is_active FROM shortlinks WHERE code LIKE CONCAT(?, \'.%\') LIMIT 1',
+        [code],
       )
     }
 
