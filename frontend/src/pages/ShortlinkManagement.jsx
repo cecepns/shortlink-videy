@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { API_BASE_URL } from "../config";
-import { Link2, Copy as CopyIcon, Trash2 } from "lucide-react";
+import { Link2, Copy as CopyIcon, Trash2, Settings } from "lucide-react";
 
 function ShortlinkManagement() {
   const { token, onUnauthorized } = useOutletContext();
@@ -11,6 +11,14 @@ function ShortlinkManagement() {
   const [originalUrl, setOriginalUrl] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+
+  const [showFormatSettings, setShowFormatSettings] = useState(false);
+  const [urlFormat, setUrlFormat] = useState(() => localStorage.getItem("urlFormat") || "standard");
+
+  const handleSetUrlFormat = (format) => {
+    setUrlFormat(format);
+    localStorage.setItem("urlFormat", format);
+  };
 
   const fetchLinks = async (pageNumber) => {
     if (!token) return;
@@ -56,7 +64,10 @@ function ShortlinkManagement() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ originalUrl }),
+        body: JSON.stringify({
+          originalUrl,
+          extension: urlFormat === "mp4" ? ".mp4" : ""
+        }),
       });
       if (res.status === 401) {
         onUnauthorized();
@@ -138,14 +149,75 @@ function ShortlinkManagement() {
       )}
 
       <div className="rounded-xl bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-100 text-sky-600">
-            <Link2 className="h-4 w-4" />
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-100 text-sky-600">
+              <Link2 className="h-4 w-4" />
+            </div>
+            <h2 className="text-base font-semibold text-slate-800">
+              Buat Shortlink
+            </h2>
           </div>
-          <h2 className="text-base font-semibold text-slate-800">
-            Buat Shortlink
-          </h2>
+          <button
+            type="button"
+            onClick={() => setShowFormatSettings(!showFormatSettings)}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
+            title="Pemformatan URL"
+          >
+            <Settings className="h-4.5 w-4.5" />
+          </button>
         </div>
+
+        {showFormatSettings && (
+          <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3 animate-fade-in">
+            <div className="flex items-center gap-2 text-slate-800 font-semibold text-sm">
+              <Settings className="h-4 w-4 text-sky-600" />
+              <span>Pemformatan URL</span>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Pilih apakah akan secara otomatis menambahkan ekstensi .mp4 ke tautan pendek standar yang Anda hasilkan.
+            </p>
+            
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div
+                onClick={() => handleSetUrlFormat("standard")}
+                className={`cursor-pointer rounded-xl border p-3.5 transition flex flex-col justify-between ${
+                  urlFormat === "standard"
+                    ? "border-sky-500 bg-sky-50/70 text-sky-950"
+                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold">Tautan Standar</span>
+                  <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-700 uppercase">
+                    Bawaan
+                  </span>
+                </div>
+                <p className="mt-2 text-[11px] font-mono text-slate-500">
+                  {window.location.host}/s/abcd1234
+                </p>
+              </div>
+
+              <div
+                onClick={() => handleSetUrlFormat("mp4")}
+                className={`cursor-pointer rounded-xl border p-3.5 transition flex flex-col justify-between ${
+                  urlFormat === "mp4"
+                    ? "border-sky-500 bg-sky-50/70 text-sky-955"
+                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <span className="text-xs font-semibold block">Tambahkan ekstensi .mp4</span>
+                <p className="mt-2 text-[11px] font-mono text-slate-500">
+                  {window.location.host}/s/abcd1234.mp4
+                </p>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-slate-500">
+              Catatan: Pengaturan ini hanya berlaku untuk tautan yang baru dibuat.
+            </p>
+          </div>
+        )}
         <form
           onSubmit={handleCreate}
           className="flex flex-col gap-3 sm:flex-row"
