@@ -20,6 +20,26 @@ const pool = mysql.createPool({
   connectionLimit: 10,
 })
 
+async function initializeDatabase() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS clicks (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        shortlink_id INT UNSIGNED NOT NULL,
+        clicked_at DATETIME NOT NULL,
+        PRIMARY KEY (id),
+        KEY idx_clicked_at (clicked_at),
+        KEY idx_shortlink_id (shortlink_id),
+        FOREIGN KEY (shortlink_id) REFERENCES shortlinks (id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `)
+    console.log('Database clicks table initialized successfully.')
+  } catch (err) {
+    console.error('Failed to initialize clicks table:', err)
+  }
+}
+initializeDatabase()
+
 function generateCode(length = 9) {
   const chars =
     'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -88,13 +108,102 @@ app.get('/api/links', authMiddleware, async (req, res) => {
 
 app.get('/api/links-stats', authMiddleware, async (req, res) => {
   try {
-    const [[row]] = await pool.query(
+    const [[linkRow]] = await pool.query(
       'SELECT COUNT(*) AS total, SUM(is_active = 1) AS active FROM shortlinks',
     )
+    const [[clickRow]] = await pool.query(
+      'SELECT COUNT(*) AS totalClicks FROM clicks',
+    )
+    const [[todayRow]] = await pool.query(
+      'SELECT COUNT(*) AS clicksToday FROM clicks WHERE clicked_at >= CURDATE()',
+    )
+    const [[liveRow]] = await pool.query(
+      'SELECT COUNT(*) AS liveTraffic FROM clicks WHERE clicked_at >= NOW() - INTERVAL 30 MINUTE',
+    )
+
     res.json({
-      total: row.total || 0,
-      active: row.active || 0,
+      total: linkRow.total || 0,
+      active: linkRow.active || 0,
+      totalClicks: clickRow.totalClicks || 0,
+      clicksToday: todayRow.clicksToday || 0,
+      liveTraffic: liveRow.liveTraffic || 0,
     })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Server error' })
+  }
+})
+
+app.get('/api/clicks-trend', authMiddleware, async (req, res) => {
+  const { range } = req.query
+  try {
+    let daysLimit = 7
+
+    if (range === 'today') {
+      const [rows] = await pool.query(
+        `SELECT DATE_FORMAT(clicked_at, '%Y-%m-%d %H:00') AS label, COUNT(*) AS clicks
+         FROM clicks
+         WHERE clicked_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+         GROUP BY DATE_FORMAT(clicked_at, '%Y-%m-%d %H:00')
+         ORDER BY label ASC`
+      )
+      
+      const data = []
+      const now = new Date()
+      for (let i = 23; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 60 * 60 * 1000)
+        const year = d.getFullYear()
+        const month = String(d.getMonth() + 1).padStart(2, '0')
+        const date = String(d.getDate()).padStart(2, '0')
+        const hour = String(d.getHours()).padStart(2, '0')
+        const key = `${year}-${month}-${date} ${hour}:00`
+        const displayLabel = `${hour}:00`
+        
+        const found = rows.find(r => r.label === key)
+        data.push({
+          label: displayLabel,
+          clicks: found ? found.clicks : 0
+        })
+      }
+      return res.json(data)
+    } else if (range === '30d') {
+      daysLimit = 30
+    } else if (range === 'all') {
+      const [[minDateRow]] = await pool.query('SELECT MIN(clicked_at) AS min_date FROM clicks')
+      const minDate = minDateRow.min_date ? new Date(minDateRow.min_date) : new Date()
+      const diffTime = Math.abs(new Date() - minDate)
+      daysLimit = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 1
+      if (daysLimit < 7) daysLimit = 7
+    } else {
+      daysLimit = 7
+    }
+
+    const [rows] = await pool.query(
+      `SELECT DATE_FORMAT(clicked_at, '%Y-%m-%d') AS label, COUNT(*) AS clicks
+       FROM clicks
+       WHERE clicked_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+       GROUP BY DATE(clicked_at)
+       ORDER BY label ASC`,
+      [daysLimit - 1]
+    )
+
+    const data = []
+    const now = new Date()
+    for (let i = daysLimit - 1; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000)
+      const year = d.getFullYear()
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const date = String(d.getDate()).padStart(2, '0')
+      const key = `${year}-${month}-${date}`
+      const displayLabel = `${date}-${month}-${year}`
+
+      const found = rows.find(r => r.label === key)
+      data.push({
+        label: displayLabel,
+        clicks: found ? found.clicks : 0
+      })
+    }
+    res.json(data)
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Server error' })
@@ -104,13 +213,41 @@ app.get('/api/links-stats', authMiddleware, async (req, res) => {
 app.get('/api/links/:code', async (req, res) => {
   const { code } = req.params
   try {
-    const [rows] = await pool.query(
-      'SELECT code, original_url FROM shortlinks WHERE code = ? LIMIT 1',
+    let [rows] = await pool.query(
+      'SELECT id, code, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
       [code],
     )
+
+    if (rows.length === 0 && code.endsWith('.mp4')) {
+      const baseCode = code.slice(0, -4)
+      ;[rows] = await pool.query(
+        'SELECT id, code, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
+        [baseCode],
+      )
+    }
+
+    if (rows.length === 0 && !code.endsWith('.mp4')) {
+      const mp4Code = code + '.mp4'
+      ;[rows] = await pool.query(
+        'SELECT id, code, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
+        [mp4Code],
+      )
+    }
+
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Shortlink tidak ditemukan' })
     }
+
+    if (!rows[0].is_active) {
+      return res.status(410).json({ message: 'Shortlink tidak aktif' })
+    }
+
+    // Record click
+    await pool.query(
+      'INSERT INTO clicks (shortlink_id, clicked_at) VALUES (?, NOW())',
+      [rows[0].id]
+    )
+
     return res.json(rows[0])
   } catch (err) {
     console.error(err)
@@ -119,13 +256,15 @@ app.get('/api/links/:code', async (req, res) => {
 })
 
 app.post('/api/links', authMiddleware, async (req, res) => {
-  const { originalUrl } = req.body || {}
+  const { originalUrl, extension } = req.body || {}
   if (!originalUrl) {
     return res.status(400).json({ message: 'originalUrl wajib diisi' })
   }
 
+  const suffix = extension === '.mp4' ? '.mp4' : ''
+
   try {
-    let code = generateCode()
+    let code = generateCode() + suffix
     let exists = true
 
     while (exists) {
@@ -136,7 +275,7 @@ app.post('/api/links', authMiddleware, async (req, res) => {
       if (rows.length === 0) {
         exists = false
       } else {
-        code = generateCode()
+        code = generateCode() + suffix
       }
     }
 
@@ -197,16 +336,40 @@ app.patch('/api/links/:id/active', authMiddleware, async (req, res) => {
 app.get('/:code', async (req, res) => {
   const { code } = req.params
   try {
-    const [rows] = await pool.query(
-      'SELECT original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
+    let [rows] = await pool.query(
+      'SELECT id, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
       [code],
     )
+
+    if (rows.length === 0 && code.endsWith('.mp4')) {
+      const baseCode = code.slice(0, -4)
+      ;[rows] = await pool.query(
+        'SELECT id, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
+        [baseCode],
+      )
+    }
+
+    if (rows.length === 0 && !code.endsWith('.mp4')) {
+      const mp4Code = code + '.mp4'
+      ;[rows] = await pool.query(
+        'SELECT id, original_url, is_active FROM shortlinks WHERE code = ? LIMIT 1',
+        [mp4Code],
+      )
+    }
+
     if (rows.length === 0) {
       return res.status(404).send('Shortlink tidak ditemukan')
     }
     if (!rows[0].is_active) {
       return res.status(410).send('Shortlink tidak aktif')
     }
+
+    // Record click
+    await pool.query(
+      'INSERT INTO clicks (shortlink_id, clicked_at) VALUES (?, NOW())',
+      [rows[0].id]
+    )
+
     res.redirect(rows[0].original_url)
   } catch (err) {
     console.error(err)
