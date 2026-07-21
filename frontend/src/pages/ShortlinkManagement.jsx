@@ -13,8 +13,15 @@ function ShortlinkManagement() {
   const [error, setError] = useState("");
 
   const [showFormatSettings, setShowFormatSettings] = useState(false);
-  const [urlFormat, setUrlFormat] = useState(() => localStorage.getItem("urlFormat") || "standard");
-  const [customExtension, setCustomExtension] = useState(() => localStorage.getItem("customExtension") || ".mp4");
+  const [urlFormat, setUrlFormat] = useState(
+    () => localStorage.getItem("urlFormat") || "standard",
+  );
+  const [customExtension, setCustomExtension] = useState(
+    () => localStorage.getItem("customExtension") || ".mp4",
+  );
+  const [multiInsertMode, setMultiInsertMode] = useState(false);
+  const [multiUrls, setMultiUrls] = useState("");
+  const [bulkCreating, setBulkCreating] = useState(false);
 
   const handleSetUrlFormat = (format) => {
     setUrlFormat(format);
@@ -72,7 +79,8 @@ function ShortlinkManagement() {
         },
         body: JSON.stringify({
           originalUrl,
-          extension: urlFormat === "custom" ? getCleanedExtension(customExtension) : ""
+          extension:
+            urlFormat === "custom" ? getCleanedExtension(customExtension) : "",
         }),
       });
       if (res.status === 401) {
@@ -89,6 +97,82 @@ function ShortlinkManagement() {
       setError(err.message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleBulkCreate = async (e) => {
+    e.preventDefault();
+    if (!multiUrls.trim()) return;
+    setBulkCreating(true);
+    setError("");
+
+    const urls = multiUrls
+      .split("\n")
+      .map((url) => url.trim())
+      .filter((url) => url.length > 0);
+
+    if (urls.length === 0) {
+      setBulkCreating(false);
+      return;
+    }
+
+    try {
+      const promises = urls.map((url) =>
+        fetch(`${API_BASE_URL}/links`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            originalUrl: url,
+            extension:
+              urlFormat === "custom"
+                ? getCleanedExtension(customExtension)
+                : "",
+          }),
+        }),
+      );
+
+      const results = await Promise.all(promises);
+      const failed = results.filter((res) => !res.ok);
+
+      if (failed.length > 0) {
+        const errorMessages = await Promise.all(
+          failed.map(async (res) => {
+            const data = await res.json();
+            return data.message || "Gagal membuat shortlink";
+          }),
+        );
+        throw new Error(
+          `${failed.length} dari ${urls.length} gagal: ${errorMessages.join(", ")}`,
+        );
+      }
+
+      setMultiUrls("");
+      fetchLinks(page);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBulkCreating(false);
+    }
+  };
+
+  const handleCopyDomain = async (domain) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(domain);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = domain;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      alert(`Berhasil menyalin: ${domain}`);
+    } catch {
+      alert("Gagal menyalin domain.");
     }
   };
 
@@ -164,14 +248,27 @@ function ShortlinkManagement() {
               Buat Shortlink
             </h2>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowFormatSettings(!showFormatSettings)}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
-            title="Pemformatan URL"
-          >
-            <Settings className="h-4.5 w-4.5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMultiInsertMode(!multiInsertMode)}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                multiInsertMode
+                  ? "bg-sky-600 text-white hover:bg-sky-700"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              {multiInsertMode ? "Single" : "Multi"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowFormatSettings(!showFormatSettings)}
+              className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
+              title="Pemformatan URL"
+            >
+              <Settings className="h-4.5 w-4.5" />
+            </button>
+          </div>
         </div>
 
         {showFormatSettings && (
@@ -181,9 +278,10 @@ function ShortlinkManagement() {
               <span>Pemformatan URL</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Pilih apakah akan secara otomatis menambahkan ekstensi khusus (misalnya .mp4) ke tautan pendek standar yang Anda hasilkan.
+              Pilih apakah akan secara otomatis menambahkan ekstensi khusus
+              (misalnya .mp4) ke tautan pendek standar yang Anda hasilkan.
             </p>
-            
+
             <div className="grid gap-2 sm:grid-cols-2">
               <div
                 onClick={() => handleSetUrlFormat("standard")}
@@ -212,8 +310,10 @@ function ShortlinkManagement() {
                     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                 }`}
               >
-                <span className="text-xs font-semibold block">Ekstensi Kustom</span>
-                
+                <span className="text-xs font-semibold block">
+                  Ekstensi Kustom
+                </span>
+
                 <input
                   type="text"
                   placeholder=".mp4"
@@ -227,36 +327,78 @@ function ShortlinkManagement() {
                 />
 
                 <p className="mt-2 text-[11px] font-mono text-slate-500 truncate">
-                  {window.location.host}/s/abcd1234{getCleanedExtension(customExtension)}
+                  {window.location.host}/s/abcd1234
+                  {getCleanedExtension(customExtension)}
                 </p>
               </div>
             </div>
 
             <p className="text-[10px] text-slate-500">
-              Catatan: Pengaturan ini hanya berlaku untuk tautan yang baru dibuat.
+              Catatan: Pengaturan ini hanya berlaku untuk tautan yang baru
+              dibuat.
             </p>
           </div>
         )}
-        <form
-          onSubmit={handleCreate}
-          className="flex flex-col gap-3 sm:flex-row"
-        >
-          <input
-            type="url"
-            placeholder="https://contoh.com/halaman-panjang..."
-            className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
-            value={originalUrl}
-            onChange={(e) => setOriginalUrl(e.target.value)}
-            required
-          />
-          <button
-            type="submit"
-            disabled={creating}
-            className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
+        {!multiInsertMode ? (
+          <form
+            onSubmit={handleCreate}
+            className="flex flex-col gap-3 sm:flex-row"
           >
-            {creating ? "Menyimpan..." : "Generate"}
-          </button>
-        </form>
+            <input
+              type="url"
+              placeholder="https://contoh.com/halaman-panjang..."
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+              value={originalUrl}
+              onChange={(e) => setOriginalUrl(e.target.value)}
+              required
+            />
+            <button
+              type="submit"
+              disabled={creating}
+              className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
+            >
+              {creating ? "Menyimpan..." : "Generate"}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleBulkCreate} className="space-y-3">
+            <textarea
+              placeholder="https://link1\nhttps://link2\nhttps://link3"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 min-h-[120px] resize-y"
+              value={multiUrls}
+              onChange={(e) => setMultiUrls(e.target.value)}
+              required
+            />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-600">Copy Domain:</span>
+                <button
+                  type="button"
+                  onClick={() => handleCopyDomain("http://cdn.videyxz.com")}
+                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+                >
+                  <CopyIcon className="h-3 w-3" />
+                  <span>cdn.videyxz.com</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCopyDomain("http://cdn.videyxz.cloud")}
+                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+                >
+                  <CopyIcon className="h-3 w-3" />
+                  <span>cdn.videyxz.cloud</span>
+                </button>
+              </div>
+              <button
+                type="submit"
+                disabled={bulkCreating}
+                className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
+              >
+                {bulkCreating ? "Menyimpan..." : "Generate All"}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
 
       <div className="rounded-xl bg-white shadow-sm">
